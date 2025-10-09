@@ -15,35 +15,44 @@ def main():
     script_name = os.path.basename(sys.argv[0])
     parser = argparse.ArgumentParser(
         prog=script_name,
-        description="Tools to parse and manipulate VCF files"
+        description="Tools to parse, filter, annotate, and merge VCF files"
     )
 
-    parser.add_argument("-v", "--vcf", required=True, help="Input VCF file [REQUIRED]")
+    parser.add_argument("-v", "--vcf", help="Input VCF file (required for most operations)")
     parser.add_argument("--filter", choices=("y", "n"), default="n",
-                        help="Option to filter vcf file and output into stdout")
+                        help="Filter VCF file and print output to stdout")
     parser.add_argument("--depth_filter", type=int, default=20,
                         help="If --filter=y, minimum depth filter (default: 20)")
     parser.add_argument("--remove_ambiguous", choices=("y", "n"), default="n",
                         help="If --filter=y, remove any sites that are ambiguous")
     parser.add_argument("--stats", choices=("y", "n"), default="n",
-                        help="Option to print basic stats from VCF file")
+                        help="Calculate and print summary statistics from VCF file")
     parser.add_argument("--annotate", choices=("y", "n"), default="n",
-                        help="Option to annotate variants in VCF file [requires --gff3 and --fasta]")
+                        help="Annotate variants using GFF3 and FASTA [requires --gff3 and --fasta]")
     parser.add_argument("--convert_to_fasta", choices=("y", "n"), default="n",
                         help="Convert VCF file to FASTA per-sample consensus [requires --fasta reference]")
+    parser.add_argument("--merge", choices=("y", "n"), default="n",
+                        help="Merge multiple VCFs listed in a name-location file into one multi-sample VCF")
+    parser.add_argument("--name_location_file",
+                        help="Tab-delimited file with sample names and VCF paths (for use with --merge=y)")
+    parser.add_argument("--output_merged_vcf", default="merged.vcf",
+                        help="Output filename for merged VCF (default: merged.vcf)")
     parser.add_argument("--gff3", help="GFF3 file (required if --annotate=y)")
     parser.add_argument("--fasta", help="FASTA file (required if --annotate=y or --convert_to_fasta=y)")
 
     args = parser.parse_args()
 
     # ----------------------------------------------------------------
-    # Validation
+    # Validate input combinations
     # ----------------------------------------------------------------
     if args.annotate == "y" and (not args.gff3 or not args.fasta):
         parser.error("--annotate=y requires both --gff3 and --fasta files")
 
     if args.convert_to_fasta == "y" and not args.fasta:
         parser.error("--convert_to_fasta=y requires --fasta reference")
+
+    if args.merge == "y" and not args.name_location_file:
+        parser.error("--merge=y requires --name_location_file with sample\tvcf paths")
 
     # ----------------------------------------------------------------
     # Load reference FASTA if needed
@@ -56,6 +65,8 @@ def main():
     # Option 1: Filter VCF
     # ----------------------------------------------------------------
     if args.filter == "y":
+        if not args.vcf:
+            parser.error("--vcf required when using --filter=y")
         print(f"\n[INFO] Filtering {args.vcf} with depth >= {args.depth_filter}, "
               f"remove ambiguous = {args.remove_ambiguous}")
         vcf.filter_vcf(args.vcf, args.depth_filter, args.remove_ambiguous == "y")
@@ -82,6 +93,8 @@ def main():
     # Option 3: Convert to FASTA
     # ----------------------------------------------------------------
     elif args.convert_to_fasta == "y":
+        if not args.vcf:
+            parser.error("--vcf required when using --convert_to_fasta=y")
         print("\n[INFO] Converting VCF to FASTA sequences...")
         vcf.vcf_file_to_fasta(args.vcf, fasta_sequences)
         print("[INFO] FASTA conversion complete.")
@@ -90,12 +103,23 @@ def main():
     # Option 4: VCF Statistics
     # ----------------------------------------------------------------
     elif args.stats == "y":
+        if not args.vcf:
+            parser.error("--vcf required when using --stats=y")
         print("\n[INFO] Calculating VCF summary statistics...")
         vcf.vcf_stats(args.vcf)
         print("[INFO] VCF statistics summary complete.")
 
+    # ----------------------------------------------------------------
+    # Option 5: Merge multiple VCFs
+    # ----------------------------------------------------------------
+    elif args.merge == "y":
+        print(f"\n[INFO] Merging VCFs listed in {args.name_location_file}...")
+        vcf.vcf_name_location_merge(args.name_location_file, args.output_merged_vcf)
+        print(f"[INFO] Merged VCF written to {args.output_merged_vcf}")
+
     else:
-        print("\n[INFO] No operation selected. Use --annotate=y, --filter=y, or --convert_to_fasta=y.")
+        print("\n[INFO] No operation selected. "
+              "Use --annotate=y, --filter=y, --convert_to_fasta=y, --stats=y, or --merge=y.")
 
 
 if __name__ == "__main__":
