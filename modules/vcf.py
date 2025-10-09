@@ -498,5 +498,105 @@ def vcf_file_to_fasta(vcf_file, fasta_sequences):
     print("All sample FASTA sequences generated successfully")
 
 
+def vcf_name_location_merge(name_location_file, output_file="merged.vcf"):
+    """
+    Merge multiple single-sample VCF files into one multi-sample VCF.
 
+    Input file format (tab-separated):
+        Sample1   path/to/Sample1.vcf
+        Sample2   path/to/Sample2.vcf
+        Sample3   path/to/Sample3.vcf
 
+    Output:
+        merged.vcf  – combined VCF with all samples as separate columns.
+
+    Notes:
+        - Assumes all VCFs have the same reference and coordinate system.
+        - Lines are matched by CHROM and POS.
+        - INFO and FILTER fields are taken from the first VCF if duplicated.
+    """
+
+    import collections
+
+    sample_names = []
+    vcf_files = []
+
+    # --- Read sample name + VCF mapping ---
+    with open(name_location_file, "r") as fh:
+        for line in fh:
+            if not line.strip() or line.startswith("#"):
+                continue
+            name, path = line.strip().split("\t")
+            sample_names.append(name)
+            vcf_files.append(path)
+
+    if not vcf_files:
+        print("[ERROR] No VCFs provided for merging.")
+        return
+
+    print(f"[INFO] Merging {len(vcf_files)} VCF files into {output_file}")
+
+    # --- Read headers and variant lines ---
+    merged_header = []
+    variant_dict = collections.OrderedDict()  # key: (CHROM, POS, REF, ALT)
+
+    for idx, vcf_path in enumerate(vcf_files):
+        with open(vcf_path, "r") as fh:
+            for line in fh:
+                if line.startswith("##"):
+                    if idx == 0:  # keep meta-info only once
+                        merged_header.append(line.strip())
+                    continue
+
+                if line.startswith("#CHROM"):
+                    if idx == 0:
+                        header_parts = line.strip().split("\t")
+                        merged_header_line = "\t".join(header_parts[:9] + sample_names)
+                        merged_header.append(merged_header_line)
+                    continue
+
+                bits = line.strip().split("\t")
+                if len(bits) < 10:
+                    continue
+
+                chrom, pos, _id, ref, alt, qual, flt, info, fmt = bits[:9]
+                sample_data = bits[9]
+
+                key = (chrom, pos, ref, alt)
+                if key not in variant_dict:
+                    # Initialize with placeholders for all samples
+                    variant_dict[key] = {
+                        "chrom": chrom,
+                        "pos": pos,
+                        "id": _id,
+                        "ref": ref,
+                        "alt": alt,
+                        "qual": qual,
+                        "filter": flt,
+                        "info": info,
+                        "format": fmt,
+                        "samples": ["./."] * len(vcf_files),
+                    }
+
+                variant_dict[key]["samples"][idx] = sample_data
+
+    # --- Write merged VCF ---
+    with open(output_file, "w") as out:
+        for hline in merged_header:
+            out.write(hline + "\n")
+        for key, record in variant_dict.items():
+            out.write(
+                "\t".join([
+                    record["chrom"],
+                    record["pos"],
+                    record["id"],
+                    record["ref"],
+                    record["alt"],
+                    record["qual"],
+                    record["filter"],
+                    record["info"],
+                    record["format"],
+                ] + record["samples"]) + "\n"
+            )
+
+    print(f"[INFO] Merged VCF written to: {output_file}")
