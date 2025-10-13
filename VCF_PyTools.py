@@ -81,7 +81,7 @@ def main():
     elif args.remove_ref_sites == "y":
         print(f"\n[INFO] Removing reference-only sites from {args.vcf}...")
         vcf.remove_ref_sites(args.vcf)
-        print("[INFO] Reference sites removed. Output written to stdout.")
+        #print("[INFO] Reference sites removed. Output written to stdout.")
 
     # ----------------------------------------------------------------
     # Option 3: Annotation
