@@ -236,6 +236,9 @@ def remove_ref_sites(vcf_file):
             if line.startswith("##") or line.startswith("#CHROM"):
                 print(line.strip())
                 continue
+            vcf_info = parse_vcf_line(line, vcf_struct)
+            if vcf_info.get("header") == "Y":
+                continue
             num_samples = vcf_info["number_of_samples"]
             variant_found = False
 
