@@ -243,7 +243,7 @@ def remove_ref_sites(vcf_file):
             variant_found = False
 
             for i in range(num_samples):
-                base_type = vcf_info.get("base_type{i}", "unknown")
+                base_type = vcf_info.get(f"base_type{i}", "unknown")
 
                 if base_type not in ("reference", "ambiguous", "unknown"):
                     variant_found = True
