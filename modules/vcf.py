@@ -222,6 +222,31 @@ def filter_vcf(vcf_file, min_depth=20, remove_ambiguous=False):
                 continue
 
             print(line.strip())
+# --------------------------------------------------------------------
+# remove ref sites logic 
+# --------------------------------------------------------------------
+def remove_ref_sites(vcf_file):
+    """
+    Remove all non-snp ref sites from a vcf file
+    Output to stdout
+    """
+    vcf_struct = {}
+    with open(vcf_file, "r") as fh:
+        for line in fh:
+            if line.startswith("##") or line.startswith("#CHROM"):
+                print(line.strip())
+                continue
+            num_samples = vcf_info["number_of_samples"]
+            variant_found = False
+
+            for i in range(num_samples):
+                base_type = vcf_info.get("base_type{i}", "unknown")
+
+                if base_type not in ("reference", "ambiguous", "unknown"):
+                    variant_found = True
+                    break
+            if variant_found:
+                print(line.strip())
 
 # --------------------------------------------------------------------
 # stats logic 

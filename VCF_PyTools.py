@@ -25,6 +25,8 @@ def main():
                         help="If --filter=y, minimum depth filter (default: 20)")
     parser.add_argument("--remove_ambiguous", choices=("y", "n"), default="n",
                         help="If --filter=y, remove any sites that are ambiguous")
+    parser.add_argument("--remove_ref_sites", choices=("y", "n"), default="n",
+                        help="Remove all non-variant (reference-only) sites from VCF")
     parser.add_argument("--stats", choices=("y", "n"), default="n",
                         help="Calculate and print summary statistics from VCF file")
     parser.add_argument("--annotate", choices=("y", "n"), default="n",
@@ -54,6 +56,9 @@ def main():
     if args.merge == "y" and not args.name_location_file:
         parser.error("--merge=y requires --name_location_file with sample\tvcf paths")
 
+    if not args.vcf and any(opt == "y" for opt in [args.filter, args.stats, args.annotate, args.convert_to_fasta, args.remove_ref_sites]):
+        parser.error("--vcf is required for this operation")
+
     # ----------------------------------------------------------------
     # Load reference FASTA if needed
     # ----------------------------------------------------------------
@@ -65,15 +70,21 @@ def main():
     # Option 1: Filter VCF
     # ----------------------------------------------------------------
     if args.filter == "y":
-        if not args.vcf:
-            parser.error("--vcf required when using --filter=y")
         print(f"\n[INFO] Filtering {args.vcf} with depth >= {args.depth_filter}, "
               f"remove ambiguous = {args.remove_ambiguous}")
         vcf.filter_vcf(args.vcf, args.depth_filter, args.remove_ambiguous == "y")
         print("[INFO] Filtering complete. Filtered VCF printed to stdout.")
 
     # ----------------------------------------------------------------
-    # Option 2: Annotation
+    # Option 2: Remove reference sites
+    # ----------------------------------------------------------------
+    elif args.remove_ref_sites == "y":
+        print(f"\n[INFO] Removing reference-only sites from {args.vcf}...")
+        vcf.remove_ref_sites(args.vcf)
+        print("[INFO] Reference sites removed. Output written to stdout.")
+
+    # ----------------------------------------------------------------
+    # Option 3: Annotation
     # ----------------------------------------------------------------
     elif args.annotate == "y":
         print("\n[INFO] Annotating VCF file using GFF3 and FASTA reference...")
@@ -90,27 +101,23 @@ def main():
         print("[INFO] Annotation complete. Summary written to summary_annotation.tab")
 
     # ----------------------------------------------------------------
-    # Option 3: Convert to FASTA
+    # Option 4: Convert to FASTA
     # ----------------------------------------------------------------
     elif args.convert_to_fasta == "y":
-        if not args.vcf:
-            parser.error("--vcf required when using --convert_to_fasta=y")
         print("\n[INFO] Converting VCF to FASTA sequences...")
         vcf.vcf_file_to_fasta(args.vcf, fasta_sequences)
         print("[INFO] FASTA conversion complete.")
 
     # ----------------------------------------------------------------
-    # Option 4: VCF Statistics
+    # Option 5: VCF Statistics
     # ----------------------------------------------------------------
     elif args.stats == "y":
-        if not args.vcf:
-            parser.error("--vcf required when using --stats=y")
         print("\n[INFO] Calculating VCF summary statistics...")
         vcf.vcf_stats(args.vcf)
         print("[INFO] VCF statistics summary complete.")
 
     # ----------------------------------------------------------------
-    # Option 5: Merge multiple VCFs
+    # Option 6: Merge multiple VCFs
     # ----------------------------------------------------------------
     elif args.merge == "y":
         print(f"\n[INFO] Merging VCFs listed in {args.name_location_file}...")
@@ -119,9 +126,9 @@ def main():
 
     else:
         print("\n[INFO] No operation selected. "
-              "Use --annotate=y, --filter=y, --convert_to_fasta=y, --stats=y, or --merge=y.")
+              "Use --annotate=y, --filter=y, --convert_to_fasta=y, --stats=y, --merge=y, or --remove_ref_sites=y.")
 
 
 if __name__ == "__main__":
     main()
-
+    
