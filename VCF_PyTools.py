@@ -73,7 +73,7 @@ def main():
         print(f"\n[INFO] Filtering {args.vcf} with depth >= {args.depth_filter}, "
               f"remove ambiguous = {args.remove_ambiguous}")
         vcf.filter_vcf(args.vcf, args.depth_filter, args.remove_ambiguous == "y")
-        print("[INFO] Filtering complete. Filtered VCF printed to stdout.")
+        #print("[INFO] Filtering complete. Filtered VCF printed to stdout.")
 
     # ----------------------------------------------------------------
     # Option 2: Remove reference sites
