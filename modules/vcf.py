@@ -183,44 +183,59 @@ def filter_vcf(vcf_file, min_depth=20, remove_ambiguous=False):
     Filter a VCF file by minimum read depth and optionally remove ambiguous sites.
     Writes filtered lines to stdout.
     """
-    with open(vcf_file, "r") as fh:
+    vcf_struct = {}
+    
+    while open(vcf_file, "r") as fh:
         for line in fh:
-            if line.startswith("##") or line.startswith("#CHROM"):
+            # Keep meta data lines
+            if line.startswith("##"):
+                print(line.strip())
+                continue
+            # Process header
+            if line.startswith("#CHROM"):
+                vcf_struct = get_vcf_header(line, vcf_struct)
                 print(line.strip())
                 continue
 
-            bits = line.strip().split("\t")
-            if len(bits) < 10:
+            # Parse vcf line into the dict
+            try:
+                vcf_info = parse_vcf_line(line, vcf_struct)
+            except Exception as e:
+                print(f"[WARN] Skipping malformed line: {line.strip()} ({e})")
                 continue
 
-            # parse FORMAT column
-            fmt = bits[8].split(":")
-            if "DP" not in fmt:
-                print(line.strip())  # keep if no depth info
+            # Skip malformed lines
+            if vcf_info.get("header") == "Y" or vcf_info.get("next") == 1:
                 continue
 
-            dp_index = fmt.index("DP")
+            # Optionally remove ambiguous sites if remove_ambiguous=True
+            if remove_ambiguous and (
+                "N" in vcf_info.get("ref", "") or "N" in vcf_info.get("alt", "")
+            ):
+                continue
 
-            # check all sample depths
-            sample_ok = True
-            for sample_col in bits[9:]:
-                sample_parts = sample_col.split(":")
-                if len(sample_parts) > dp_index:
-                    try:
-                        dp_val = int(sample_parts[dp_index])
-                        if dp_val < min_depth:
-                            sample_ok = False
-                            break
-                    except ValueError:
-                        sample_ok = False
+            # Find depth (DP) for each sample
+            depth_ok = True
+            num_samples = vcf_info.get("number_of_samples", 0)
+
+            for i in range(num_samples):
+                dp_key = f"DP{i}"
+                dp_val = vcf_info.get(dp_key)
+                if dp_val is None or dp_val == ".":
+                    depth_ok = False
+                    break
+                try:
+                    if int(dp_val) < min_depth:
+                        depth_ok = False
                         break
+                except ValueError:
+                    depth_ok = False
+                    break
 
-            if not sample_ok:
+            if not depth_ok:
                 continue
 
-            if remove_ambiguous and ("N" in bits[3] or "N" in bits[4]):
-                continue
-
+            #print line if passes all filter
             print(line.strip())
 # --------------------------------------------------------------------
 # remove ref sites logic 
