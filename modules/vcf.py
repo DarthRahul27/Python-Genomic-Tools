@@ -185,7 +185,7 @@ def filter_vcf(vcf_file, min_depth=20, remove_ambiguous=False):
     """
     vcf_struct = {}
     
-    while open(vcf_file, "r") as fh:
+    with open(vcf_file, "r") as fh:
         for line in fh:
             # Keep meta data lines
             if line.startswith("##"):
