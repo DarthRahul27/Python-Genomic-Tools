@@ -2,11 +2,11 @@
 # Module for VCF file manipulation and extracting features
 
 try:
-    # Works when used inside a package
-    from .fasta import translate_sequences, CODON_TABLE
+    # When inside package
+    from .fasta import parse_fasta, translate_sequences, CODON_TABLE
 except ImportError:
-    # Works when run as a standalone script
-    from modules.fasta import translate_sequences, CODON_TABLE
+    # When standalone
+    from modules.fasta import parse_fasta, translate_sequences, CODON_TABLE
 
 
 # IUPAC codes for heterozygous bases
@@ -19,13 +19,12 @@ IUPAC_CODES = {
     frozenset(["A", "C"]): "M",
 }
 
-
 # --------------------------------------------------------------------
-# header + genotype parsing helpers
+# HEADER & GENOTYPE PARSING HELPERS
 # --------------------------------------------------------------------
 
 def get_vcf_header(vcf_line, vcf_struct):
-    """Parse the VCF header line (#CHROM...) and extract sample names."""
+    """Parse #CHROM line and extract sample names."""
     bits = vcf_line.strip().split("\t")
     vcf_struct["next"] = 1
     vcf_struct["header"] = "Y"
@@ -38,7 +37,7 @@ def get_vcf_header(vcf_line, vcf_struct):
 
 
 def get_vcf_struct_and_determine_base_type(vcf_struct, gt_value):
-    """Determine base1, base2, and base_type from genotype and REF/ALT alleles."""
+    """Determine genotype → base type."""
     ref = vcf_struct.get("ref", "N")
     alt = vcf_struct.get("alt", "N")
 
@@ -46,82 +45,84 @@ def get_vcf_struct_and_determine_base_type(vcf_struct, gt_value):
         return "N", None, "ambiguous"
 
     bases = [ref] + alt.split(",")
-
-    # Normalize GT (split phasing/slash)
     gt_parts = gt_value.replace("|", "/").split("/")
 
-    # Single allele (haploid VCF)
+    # Haploid GT
     if len(gt_parts) == 1:
-        allele_idx = gt_parts[0]
-        if allele_idx == "0":
+        a = gt_parts[0]
+        if a == "0":
             return ref, None, "reference"
-        else:
-            allele_idx = int(allele_idx)
-            if allele_idx < len(bases):
-                allele = bases[allele_idx]
-                if len(allele) == len(ref):
-                    if len(ref) == 1:
-                        return allele, None, "snp"
-                    return allele, None, "snp_multi"
-                elif len(allele) > len(ref):
-                    return allele, None, "insertion"
-                elif len(allele) < len(ref):
-                    return allele, None, "deletion"
+        try:
+            idx = int(a)
+            allele = bases[idx]
+        except:
             return "N", None, "ambiguous"
 
-    # Diploid or polyploid
-    a1, a2 = gt_parts[0], gt_parts[1]
+        # SNPs & indels
+        if len(allele) == len(ref):
+            if len(ref) == 1:
+                return allele, None, "snp"
+            else:
+                return allele, None, "snp_multi"
+        elif len(allele) > len(ref):
+            return allele, None, "insertion"
+        elif len(allele) < len(ref):
+            return allele, None, "deletion"
+
+        return "N", None, "ambiguous"
+
+    # Diploid
+    a1, a2 = gt_parts[:2]
 
     # Homozygous reference
     if a1 == a2 == "0":
         return ref, None, "reference"
 
-    # Homozygous alternate (1/1, 2/2, etc.)
-    if a1 == a2 and a1 != "0":
-        allele_idx = int(a1)
-        if allele_idx < len(bases):
-            allele = bases[allele_idx]
-            if len(allele) == len(ref):
-                if len(ref) == 1:
-                    return allele, None, "snp"
+    # Homozygous alt
+    if a1 == a2:
+        try:
+            idx = int(a1)
+            allele = bases[idx]
+        except:
+            return "N", None, "ambiguous"
+
+        if len(allele) == len(ref):
+            if len(ref) == 1:
+                return allele, None, "snp"
+            else:
                 return allele, None, "snp_multi"
-            elif len(allele) > len(ref):
-                return allele, None, "insertion"
-            elif len(allele) < len(ref):
-                return allele, None, "deletion"
+        elif len(allele) > len(ref):
+            return allele, None, "insertion"
+        elif len(allele) < len(ref):
+            return allele, None, "deletion"
         return "N", None, "ambiguous"
 
-    # Heterozygous (0/1, 1/0, 1/2, etc.)
-    if a1 != a2:
-        try:
-            base1 = bases[int(a1)]
-        except (IndexError, ValueError):
-            base1 = "N"
-        try:
-            base2 = bases[int(a2)]
-        except (IndexError, ValueError):
-            base2 = "N"
+    # Heterozygous
+    try:
+        b1 = bases[int(a1)]
+    except:
+        b1 = "N"
+    try:
+        b2 = bases[int(a2)]
+    except:
+        b2 = "N"
 
-        # Determine indel vs SNP heterozygotes
-        if len(base1) != len(base2):
-            if len(base1) > len(base2):
-                base_type = "het_insertion"
-            elif len(base1) < len(base2):
-                base_type = "het_deletion"
-            else:
-                base_type = "heterozygous"
-        else:
-            base_type = "heterozygous"
+    if len(b1) != len(b2):
+        # heterozygous indel
+        if len(b1) > len(b2):
+            return b1, b2, "het_insertion"
+        elif len(b1) < len(b2):
+            return b1, b2, "het_deletion"
+    return b1, b2, "heterozygous"
 
-        return base1, base2, base_type
 
-    return "N", None, "ambiguous"
-
+# --------------------------------------------------------------------
+# VCF LINE PARSER
+# --------------------------------------------------------------------
 
 def parse_vcf_line(vcf_line, vcf_struct=None):
-    """Parse a single VCF line into a dict of fields and sample info."""
     bits = vcf_line.strip().split("\t")
-    vcf_info = {} if vcf_struct is None else vcf_struct
+    vcf_info = vcf_struct if vcf_struct is not None else {}
 
     if vcf_line.startswith("#"):
         return get_vcf_header(vcf_line, vcf_info)
@@ -130,7 +131,6 @@ def parse_vcf_line(vcf_line, vcf_struct=None):
     vcf_info["header"] = "N"
 
     if len(bits) < 9:
-        print(f"bad vcf line with <9 columns: {vcf_line}")
         vcf_info["next"] = 1
         return vcf_info
 
@@ -150,103 +150,88 @@ def parse_vcf_line(vcf_line, vcf_struct=None):
         "format": bits[8],
     })
 
-    format_parts = vcf_info["format"].split(":")
-    vcf_info["format_parts_available"] = {part: True for part in format_parts}
+    fmt_parts = bits[8].split(":")
+    vcf_info["format_parts_available"] = {p: True for p in fmt_parts}
     vcf_info["number_of_samples"] = len(bits) - 9
 
-    # per-sample data
+    # sample fields
     for i in range(9, len(bits)):
         isolate_number = i - 9
         sample_data = bits[i]
         sample_parts = sample_data.split(":")
-        if len(sample_parts) < len(format_parts):
-            raise ValueError(f"{vcf_line} sample info has fewer parts than FORMAT")
-        sample_parts = sample_parts[:len(format_parts)]
-        sample_dict = dict(zip(format_parts, sample_parts))
+        sample_parts = sample_parts[:len(fmt_parts)]
+        sample_dict = dict(zip(fmt_parts, sample_parts))
+
         for key, val in sample_dict.items():
             vcf_info[f"{key}{isolate_number}"] = val
-        gt_value = sample_dict.get("GT", ".")
-        base1, base2, base_type = get_vcf_struct_and_determine_base_type(vcf_info, gt_value)
+
+        gt = sample_dict.get("GT", ".")
+        base1, base2, base_type = get_vcf_struct_and_determine_base_type(vcf_info, gt)
+
         vcf_info[f"{isolate_number}_base1"] = base1
         vcf_info[f"{isolate_number}_base2"] = base2
         vcf_info[f"base_type{isolate_number}"] = base_type
-        if base_type == "heterozygous" and base1 and base2:
+
+        if base_type == "heterozygous":
             code = IUPAC_CODES.get(frozenset([base1, base2]), "N")
             vcf_info[f"amb_char{isolate_number}"] = code
+
     return vcf_info
 
+
 # --------------------------------------------------------------------
-# filter logic
+# BASIC FILTERING
 # --------------------------------------------------------------------
+
 def filter_vcf(vcf_file, min_depth=20, remove_ambiguous=False):
-    """
-    Filter a VCF file by minimum read depth and optionally remove ambiguous sites.
-    Writes filtered lines to stdout.
-    """
     vcf_struct = {}
-    
-    with open(vcf_file, "r") as fh:
+    with open(vcf_file) as fh:
         for line in fh:
-            # Keep meta data lines
-            if line.startswith("##"):
-                print(line.strip())
-                continue
-            # Process header
-            if line.startswith("#CHROM"):
-                vcf_struct = get_vcf_header(line, vcf_struct)
+            if line.startswith("##") or line.startswith("#CHROM"):
                 print(line.strip())
                 continue
 
-            # Parse vcf line into the dict
             try:
                 vcf_info = parse_vcf_line(line, vcf_struct)
-            except Exception as e:
-                print(f"[WARN] Skipping malformed line: {line.strip()} ({e})")
+            except Exception:
                 continue
 
-            # Skip malformed lines
-            if vcf_info.get("header") == "Y" or vcf_info.get("next") == 1:
+            fmt = vcf_info.get("format", "")
+            parts = fmt.split(":")
+            if "DP" not in parts:
+                print(line.strip())
+                continue
+            dp_index = parts.index("DP")
+
+            sample_ok = True
+            for i in range(vcf_info["number_of_samples"]):
+                dp = vcf_info.get(f"DP{i}", "0")
+                try:
+                    if int(dp) < min_depth:
+                        sample_ok = False
+                        break
+                except:
+                    sample_ok = False
+                    break
+
+            if not sample_ok:
                 continue
 
-            # Optionally remove ambiguous sites if remove_ambiguous=True
             if remove_ambiguous and (
                 "N" in vcf_info.get("ref", "") or "N" in vcf_info.get("alt", "")
             ):
                 continue
 
-            # Find depth (DP) for each sample
-            depth_ok = True
-            num_samples = vcf_info.get("number_of_samples", 0)
-
-            for i in range(num_samples):
-                dp_key = f"DP{i}"
-                dp_val = vcf_info.get(dp_key)
-                if dp_val is None or dp_val == ".":
-                    depth_ok = False
-                    break
-                try:
-                    if int(dp_val) < min_depth:
-                        depth_ok = False
-                        break
-                except ValueError:
-                    depth_ok = False
-                    break
-
-            if not depth_ok:
-                continue
-
-            #print line if passes all filter
             print(line.strip())
+
+
 # --------------------------------------------------------------------
-# remove ref sites logic 
+# REMOVE REFERENCE SITES
 # --------------------------------------------------------------------
+
 def remove_ref_sites(vcf_file):
-    """
-    Remove all non-snp ref sites from a vcf file
-    Output to stdout
-    """
     vcf_struct = {}
-    with open(vcf_file, "r") as fh:
+    with open(vcf_file) as fh:
         for line in fh:
             if line.startswith("##") or line.startswith("#CHROM"):
                 print(line.strip())
@@ -254,392 +239,274 @@ def remove_ref_sites(vcf_file):
             vcf_info = parse_vcf_line(line, vcf_struct)
             if vcf_info.get("header") == "Y":
                 continue
-            num_samples = vcf_info["number_of_samples"]
-            variant_found = False
-
-            for i in range(num_samples):
+            n = vcf_info["number_of_samples"]
+            keep = False
+            for i in range(n):
                 base_type = vcf_info.get(f"base_type{i}", "unknown")
-
                 if base_type not in ("reference", "ambiguous", "unknown"):
-                    variant_found = True
+                    keep = True
                     break
-            if variant_found:
+            if keep:
                 print(line.strip())
 
-# --------------------------------------------------------------------
-# stats logic 
-# --------------------------------------------------------------------
-def vcf_stats(vcf_file):
-    """
-    Print detailed summary statistics for a VCF file.
-    Includes separate counts for heterozygous vs homozygous variant types.
-    """
-    total_variants = 0
-    snps = 0
-    het_snps = 0
-    insertions = 0
-    het_insertions = 0
-    deletions = 0
-    het_deletions = 0
-    ambiguous = 0
-    unknown = 0
 
-    with open(vcf_file, "r") as fh:
-        vcf_struct = {}
+# --------------------------------------------------------------------
+# BASIC LOH HELPERS
+# --------------------------------------------------------------------
+
+def _merge_simple(pos_list, max_gap=100):
+    if not pos_list:
+        return []
+    pos_list = sorted(pos_list)
+    blocks = []
+    start = prev = pos_list[0]
+
+    for p in pos_list[1:]:
+        if p - prev <= max_gap:
+            prev = p
+        else:
+            blocks.append((start, prev))
+            start = p
+            prev = p
+
+    blocks.append((start, prev))
+    return blocks
+
+
+def _invert_simple(blocks, chrom_length):
+    if not blocks:
+        return [(0, chrom_length - 1)]
+    blocks = sorted(blocks)
+    loh = []
+    cur = 0
+    for (s, e) in blocks:
+        if s > cur:
+            loh.append((cur, s - 1))
+        cur = e + 1
+    if cur <= chrom_length - 1:
+        loh.append((cur, chrom_length - 1))
+    return loh
+
+
+def _overlap_interval(a, b):
+    s1, e1 = a
+    s2, e2 = b
+    s = max(s1, s2)
+    e = min(e1, e2)
+    return max(0, e - s + 1)
+
+
+def _sum_overlap_with_blocks(win, blocks):
+    tot = 0
+    for b in blocks:
+        tot += _overlap_interval(win, b)
+    return tot
+
+
+def _make_windows_zero_based(seq_len, window_size):
+    """Make 0-based, inclusive windows: (0,999), (1000,1999), ..."""
+    windows = []
+    start = 0
+    while start < seq_len:
+        end = min(start + window_size - 1, seq_len - 1)
+        windows.append((start, end))
+        start += window_size
+    return windows
+
+
+# --------------------------------------------------------------------
+# FIXED-SIZE WINDOWED VARIANT & LOH STATS
+# --------------------------------------------------------------------
+
+def windowed_loh_stats(
+    vcf_file,
+    fasta_file,
+    window_size=10_000,
+    het_gap=100,
+    min_loh_size=0,
+    include_het_indels=True,
+):
+    """
+    Produce per-window variant tallies + LOH blocks + LOH bp.
+    Windows are 0-based inclusive.
+    """
+
+    fasta_seqs = parse_fasta(fasta_file)
+    chrom_lengths = {c: len(s) for c, s in fasta_seqs.items()}
+
+    chrom_windows = {
+        chrom: _make_windows_zero_based(chrom_lengths[chrom], window_size)
+        for chrom in fasta_seqs
+    }
+
+    per_sample_windows = {}
+    het_positions = {}
+
+    vcf_struct = {}
+    sample_names = None
+
+    # ------------------------------------------------------------
+    # FIRST PASS: fill variant stats + heterozygous positions
+    # ------------------------------------------------------------
+    with open(vcf_file) as fh:
         for line in fh:
-            if line.startswith("#"):
+            if line.startswith("##"):
+                continue
+            if line.startswith("#CHROM"):
+                vcf_struct = get_vcf_header(line, vcf_struct)
+                if "isolate_names" in vcf_struct:
+                    sample_names = [
+                        vcf_struct["isolate_names"][i]
+                        for i in sorted(vcf_struct["isolate_names"])
+                    ]
                 continue
 
             vcf_info = parse_vcf_line(line, vcf_struct)
             if vcf_info.get("header") == "Y":
                 continue
 
-            total_variants += 1
-
-            for i in range(vcf_info["number_of_samples"]):
-                base_type = vcf_info.get(f"base_type{i}", "unknown")
-
-                if base_type.startswith("snp"):
-                    snps += 1
-                elif base_type == "heterozygous":
-                    het_snps += 1
-                elif base_type == "insertion":
-                    insertions += 1
-                elif base_type == "het_insertion":
-                    het_insertions += 1
-                elif base_type == "deletion":
-                    deletions += 1
-                elif base_type == "het_deletion":
-                    het_deletions += 1
-                elif base_type == "ambiguous":
-                    ambiguous += 1
-                else:
-                    unknown += 1
-
-    # --- Print summary ---
-    print("\nVCF Summary Statistics")
-    print("----------------------")
-    print(f"Total variant sites:        {total_variants}")
-    print()
-    print(f"Homozygous SNPs:            {snps}")
-    print(f"Heterozygous SNPs:          {het_snps}")
-    print(f"Homozygous insertions:      {insertions}")
-    print(f"Heterozygous insertions:    {het_insertions}")
-    print(f"Homozygous deletions:       {deletions}")
-    print(f"Heterozygous deletions:     {het_deletions}")
-    print()
-    print(f"Ambiguous sites:            {ambiguous}")
-    print(f"Unknown / other:            {unknown}")
-    print("----------------------")
-    print(f"Total variants classified:  {snps + het_snps + insertions + het_insertions + deletions + het_deletions + ambiguous + unknown}")
-
-# --------------------------------------------------------------------
-# annotation logic
-# --------------------------------------------------------------------
-
-def annotate_vcf_file(vcf_info, fasta_sequences, gff_records, summary_filename="summary_annotation.tab"):
-    """
-    Annotate variants from VCF using FASTA and GFF info.
-    Prints annotated variants to stdout and appends CDS/gene variants to summary_annotation.tab.
-    """
-    chrom = vcf_info["supercontig"]
-    pos = int(vcf_info["position"])
-    ref = vcf_info["ref"]
-    alt = vcf_info["alt"]
-
-    id_to_record = {rec["attributes"].get("ID"): rec for rec in gff_records if "ID" in rec["attributes"]}
-    per_sample_annotations = {}
-
-    for i in range(vcf_info["number_of_samples"]):
-        base_type = vcf_info.get(f"base_type{i}", "unknown")
-        annotation = {
-            "feature": "intergenic",
-            "gene_id": None,
-            "gene_alias": None,
-            "gene_name": None,
-            "effect": "N/A",
-            "base_type": base_type,
-        }
-
-        for rec in gff_records:
-            if rec["seqid"] != chrom or not (rec["start"] <= pos <= rec["end"]):
-                continue
-
-            annotation["feature"] = rec["type"]
-            annotation["gene_id"] = rec["attributes"].get("ID")
-            annotation["gene_alias"] = rec["attributes"].get("Alias")
-            annotation["gene_name"] = rec["attributes"].get("Name")
-
-            # climb to gene
-            parent_id = rec["attributes"].get("Parent")
-            while parent_id and parent_id in id_to_record:
-                parent_rec = id_to_record[parent_id]
-                if parent_rec["type"] == "gene":
-                    annotation["gene_id"] = parent_rec["attributes"].get("ID")
-                    annotation["gene_alias"] = parent_rec["attributes"].get("Alias")
-                    annotation["gene_name"] = parent_rec["attributes"].get("Name")
-                    break
-                parent_id = parent_rec["attributes"].get("Parent")
-
-            # CDS logic (uppercase)
-            if rec["type"] == "CDS":
-                seq = fasta_sequences[chrom]
-                codon_index = (pos - rec["start"]) // 3
-                codon_start = rec["start"] + codon_index * 3
-                ref_codon = seq[codon_start - 1 : codon_start + 2]
-                codon_pos = pos - codon_start
-
-                if base_type.startswith("snp"):
-                    if len(ref) == 1 and len(alt) == 1:
-                        alt_codon = ref_codon[:codon_pos] + alt + ref_codon[codon_pos + 1 :]
-                        ref_aa = translate_sequences(ref_codon)
-                        alt_aa = translate_sequences(alt_codon)
-                        if ref_aa != "*" and alt_aa == "*":
-                            annotation["effect"] = "stop_gained"
-                        elif ref_aa == "*" and alt_aa != "*":
-                            annotation["effect"] = "stop_lost"
-                        elif ref_aa == alt_aa:
-                            annotation["effect"] = "synonymous"
-                        else:
-                            annotation["effect"] = "nonsynonymous"
-
-                elif base_type == "heterozygous":
-                    base1 = vcf_info.get(f"{i}_base1")
-                    base2 = vcf_info.get(f"{i}_base2")
-                    ref_aa = translate_sequences(ref_codon)
-                    codon1 = ref_codon[:codon_pos] + base1 + ref_codon[codon_pos + 1 :]
-                    codon2 = ref_codon[:codon_pos] + base2 + ref_codon[codon_pos + 1 :]
-                    aa1 = translate_sequences(codon1)
-                    aa2 = translate_sequences(codon2)
-                    if "*" in (aa1, aa2) and "*" not in (ref_aa,):
-                        annotation["effect"] = "stop_gained_het"
-                    elif ref_aa == "*" and ("*" not in (aa1, aa2)):
-                        annotation["effect"] = "stop_lost_het"
-                    elif aa1 == ref_aa and aa2 == ref_aa:
-                        annotation["effect"] = "synonymous_het"
-                    elif aa1 != ref_aa and aa2 != ref_aa:
-                        annotation["effect"] = "nonsynonymous_het"
-                    else:
-                        annotation["effect"] = "mixed_het"
-
-                elif base_type in ("insertion", "deletion", "het_insertion", "het_deletion"):
-                    indel_len = abs(len(alt) - len(ref))
-                    if indel_len % 3 == 0:
-                        annotation["effect"] = "inframe_indel"
-                    else:
-                        window = seq[pos - 1 : pos + 30]
-                        shifted_seq = window[len(alt) - len(ref) :]
-                        aa_seq = translate_sequences(shifted_seq)
-                        annotation["effect"] = "frameshift_stop_gained" if "*" in aa_seq[:10] else "frameshift_indel"
-
-            elif rec["type"] in ("five_prime_utr", "3utr", "three_prime_utr"):
-                annotation["effect"] = "utr_variant"
-            elif rec["type"] == "intron":
-                annotation["effect"] = "intron_variant"
-            elif rec["type"] == "exon":
-                annotation["effect"] = "exonic_non_coding"
-            elif rec["type"] == "gene":
-                annotation["effect"] = "genic_non_coding"
-            else:
-                annotation["effect"] = f"noncoding_{rec['type']}"
-            break
-
-        per_sample_annotations[i] = annotation
-
-    vcf_info["annotations"] = per_sample_annotations
-
-    # print results
-    for i, ann in per_sample_annotations.items():
-        print(
-            f"{chrom}\t{pos}\t{ref}->{alt}\t"
-            f"sample{i}\t{ann['feature']}\t"
-            f"gene_id={ann['gene_id']}\tgene_alias={ann['gene_alias']}\tgene_name={ann['gene_name']}\t"
-            f"{ann['effect']}\t{ann['base_type']}"
-        )
-
-    # write summary
-    with open(summary_filename, "a") as out:
-        for i, ann in per_sample_annotations.items():
-            if ann["feature"] in ("CDS", "gene"):
-                out.write(
-                    f"sample{i}\t{ann['gene_id'] or 'NA'}\t"
-                    f"{ann['gene_name'] or 'NA'}\t{ann['gene_alias'] or 'NA'}\t"
-                    f"{ann['effect']}\n"
-                )
-    return vcf_info
-
-
-def vcf_file_to_fasta(vcf_file, fasta_sequences):
-    """
-    Python function to convert VCF file to fasta sequence
-
-    """
-
-    sample_sequences = {}
-    sample_names = []
-
-    vcf_struct = {}
-
-    with open (vcf_file, "r") as fh:
-        for line in fh:
-            if line.startswith("##"):
-                continue
-            vcf_info = parse_vcf_line(vcf_file, vcf_struct)
-
-            if "isolate_names" in vcf_info and not sample_names:
-                sample_names = [vcf_info["isolate_names"][i] for i in sorted(vcf_info["isolate_names"].keys())]
-                for name in sample_names:
-                    sample_sequences[name] = fasta.sequences.copy()
-
-            if vcf_info.get("header") == "Y":
-                continue
-
             chrom = vcf_info["supercontig"]
+            if chrom not in chrom_lengths:
+                continue
+
+            n = vcf_info["number_of_samples"]
+            if sample_names is None:
+                sample_names = [f"sample{i}" for i in range(n)]
+
+            # lazy init per-sample per-chrom windows
+            for si in range(n):
+                sname = sample_names[si]
+                per_sample_windows.setdefault(sname, {})
+                het_positions.setdefault(sname, {})
+                if chrom not in per_sample_windows[sname]:
+                    per_sample_windows[sname][chrom] = []
+                    for idx, (ws, we) in enumerate(chrom_windows[chrom], start=1):
+                        per_sample_windows[sname][chrom].append({
+                            "contig": chrom,
+                            "win_start": ws,
+                            "win_end": we,
+                            "window_id": idx,
+                            "het_snps": 0,
+                            "hom_snps": 0,
+                            "het_indels": 0,
+                            "hom_indels": 0,
+                            "total_variants": 0,
+                            "het_sites": 0,
+                            "loh_blocks": 0,
+                            "loh_bp": 0,
+                        })
+                if chrom not in het_positions[sname]:
+                    het_positions[sname][chrom] = []
+
             pos = int(vcf_info["position"])
-            ref = vcf_info["ref"]
-            alt = vcf_info["alt"]
+            pos0 = pos - 1
+            widx = pos0 // window_size
 
-            for i, sample_name in enumerate(sample_names):
-                seq_dict = sample_sequences[sample_name]
-                if chrom not in seq_dict:
+            for si in range(n):
+                sname = sample_names[si]
+                base_type = vcf_info.get(f"base_type{si}", "unknown")
+
+                if base_type in ("reference", "ambiguous", "unknown"):
                     continue
 
-                seq_list = list(seq_dict)
-
-                gt = vcf_info.get(f"GT{i}", 0)
-                base_type = vcf_info.get(f"base_type{i}", "reference")
-
-                if base_type == "reference" or gt == "0":
+                windows = per_sample_windows[sname][chrom]
+                if widx >= len(windows):
                     continue
 
-                if base_type.startswith("snp"):
-                    seq_list[pos - 1] = alt[0]
+                row = windows[widx]
+
+                if base_type.startswith("snp") and base_type != "heterozygous":
+                    row["hom_snps"] += 1
+                    row["total_variants"] += 1
 
                 elif base_type == "heterozygous":
-                    base1 = vcf_info.get(f"{i}_base1")
-                    base2 = vcf_info.get(f"{i}_base2")
-                    code = IUPAC_CODES.gets(frozenset([base1, base2]), "N")
-                    seq_list[pos - 1] = code
+                    row["het_snps"] += 1
+                    row["total_variants"] += 1
+                    row["het_sites"] += 1
+                    het_positions[sname][chrom].append(pos0)
 
-                elif base_type in ("insertion", "het_insertion"):
-                    seq_list[pos - 1 : pos - 1 + len(ref)] = list(alt)
+                elif base_type in ("insertion", "deletion"):
+                    row["hom_indels"] += 1
+                    row["total_variants"] += 1
 
-                elif base_type in ("deletion", "het_deletion"):
-                    seq_list[pos - 1 : pos - 1 + len(ref)] = []
+                elif base_type in ("het_insertion", "het_deletion"):
+                    row["het_indels"] += 1
+                    row["total_variants"] += 1
+                    if include_het_indels:
+                        row["het_sites"] += 1
+                        het_positions[sname][chrom].append(pos0)
 
-                seq_dict[chrom] = "".join(seq_list)
-                sample_sequences[sample_name] = seq_dict
+    # ------------------------------------------------------------
+    # SECOND PASS: merge het → het blocks → LOH blocks → annotate windows
+    # ------------------------------------------------------------
+    het_blocks = {}
+    loh_blocks = {}
 
-    for sample_name, seqs in sample_sequences.items():
-        outname = "{sample_name}.fasta"
+    for sname in per_sample_windows:
+        het_blocks[sname] = {}
+        loh_blocks[sname] = {}
+
+        for chrom in per_sample_windows[sname]:
+            seq_len = chrom_lengths[chrom]
+            pos_list = het_positions[sname][chrom]
+
+            hblocks = _merge_simple(pos_list, max_gap=het_gap)
+            het_blocks[sname][chrom] = hblocks
+
+            loh = _invert_simple(hblocks, seq_len)
+            if min_loh_size > 0:
+                loh = [(s, e) for (s, e) in loh if (e - s + 1) >= min_loh_size]
+            loh_blocks[sname][chrom] = loh
+
+            for row in per_sample_windows[sname][chrom]:
+                win = (row["win_start"], row["win_end"])
+
+                row["loh_bp"] = _sum_overlap_with_blocks(win, loh)
+
+                count_blocks = 0
+                for b in loh:
+                    if _overlap_interval(win, b) > 0:
+                        count_blocks += 1
+                row["loh_blocks"] = count_blocks
+
+    return {
+        "windows": per_sample_windows,
+        "het_blocks": het_blocks,
+        "loh_blocks": loh_blocks,
+        "params": {
+            "window_size": window_size,
+            "het_gap": het_gap,
+            "min_loh_size": min_loh_size,
+            "include_het_indels": include_het_indels,
+        }
+    }
+
+
+# --------------------------------------------------------------------
+# Output Tab WRITER
+# --------------------------------------------------------------------
+
+def write_windowed_loh_tsv(window_stats, output_prefix="loh_windows"):
+    windows_by_sample = window_stats["windows"]
+
+    for sample, chrom_dict in windows_by_sample.items():
+        outname = f"{output_prefix}.{sample}.tab"
         with open(outname, "w") as out:
-            for chrom, seq in seq.items():
-                out.write(f">{chrom}\n")
-                for i in range(0, len(seq), 60):
-                    out.write(seq[i : i + 60] + "\n")
-        print(f"Wrote {outname}")
-    print("All sample FASTA sequences generated successfully")
-
-
-def vcf_name_location_merge(name_location_file, output_file="merged.vcf"):
-    """
-    Merge multiple single-sample VCF files into one multi-sample VCF.
-
-    Input file format (tab-separated):
-        Sample1   path/to/Sample1.vcf
-        Sample2   path/to/Sample2.vcf
-        Sample3   path/to/Sample3.vcf
-
-    Output:
-        merged.vcf  – combined VCF with all samples as separate columns.
-
-    Notes:
-        - Assumes all VCFs have the same reference and coordinate system.
-        - Lines are matched by CHROM and POS.
-        - INFO and FILTER fields are taken from the first VCF if duplicated.
-    """
-
-    import collections
-
-    sample_names = []
-    vcf_files = []
-
-    # --- Read sample name + VCF mapping ---
-    with open(name_location_file, "r") as fh:
-        for line in fh:
-            if not line.strip() or line.startswith("#"):
-                continue
-            name, path = line.strip().split("\t")
-            sample_names.append(name)
-            vcf_files.append(path)
-
-    if not vcf_files:
-        print("[ERROR] No VCFs provided for merging.")
-        return
-
-    print(f"[INFO] Merging {len(vcf_files)} VCF files into {output_file}")
-
-    # --- Read headers and variant lines ---
-    merged_header = []
-    variant_dict = collections.OrderedDict()  # key: (CHROM, POS, REF, ALT)
-
-    for idx, vcf_path in enumerate(vcf_files):
-        with open(vcf_path, "r") as fh:
-            for line in fh:
-                if line.startswith("##"):
-                    if idx == 0:  # keep meta-info only once
-                        merged_header.append(line.strip())
-                    continue
-
-                if line.startswith("#CHROM"):
-                    if idx == 0:
-                        header_parts = line.strip().split("\t")
-                        merged_header_line = "\t".join(header_parts[:9] + sample_names)
-                        merged_header.append(merged_header_line)
-                    continue
-
-                bits = line.strip().split("\t")
-                if len(bits) < 10:
-                    continue
-
-                chrom, pos, _id, ref, alt, qual, flt, info, fmt = bits[:9]
-                sample_data = bits[9]
-
-                key = (chrom, pos, ref, alt)
-                if key not in variant_dict:
-                    # Initialize with placeholders for all samples
-                    variant_dict[key] = {
-                        "chrom": chrom,
-                        "pos": pos,
-                        "id": _id,
-                        "ref": ref,
-                        "alt": alt,
-                        "qual": qual,
-                        "filter": flt,
-                        "info": info,
-                        "format": fmt,
-                        "samples": ["./."] * len(vcf_files),
-                    }
-
-                variant_dict[key]["samples"][idx] = sample_data
-
-    # --- Write merged VCF ---
-    with open(output_file, "w") as out:
-        for hline in merged_header:
-            out.write(hline + "\n")
-        for key, record in variant_dict.items():
             out.write(
-                "\t".join([
-                    record["chrom"],
-                    record["pos"],
-                    record["id"],
-                    record["ref"],
-                    record["alt"],
-                    record["qual"],
-                    record["filter"],
-                    record["info"],
-                    record["format"],
-                ] + record["samples"]) + "\n"
+                "Contig\tWindow_Start\tWindow_Stop\tRunning_Position\t"
+                "Het_SNPs\tHom_SNPs\tHet_Indels\tHom_Indels\t"
+                "Total_Variants\tHet_Sites\tLOH_Blocks\tLOH_bp\n"
             )
 
-    print(f"[INFO] Merged VCF written to: {output_file}")
+            for chrom, win_list in chrom_dict.items():
+                for row in win_list:
+                    out.write(
+                        f"{row['contig']}\t"
+                        f"{row['win_start']}\t{row['win_end']}\t{row['window_id']}\t"
+                        f"{row['het_snps']}\t{row['hom_snps']}\t"
+                        f"{row['het_indels']}\t{row['hom_indels']}\t"
+                        f"{row['total_variants']}\t{row['het_sites']}\t"
+                        f"{row['loh_blocks']}\t{row['loh_bp']}\n"
+                    )
+        print(f"[INFO] wrote {outname}")
+
