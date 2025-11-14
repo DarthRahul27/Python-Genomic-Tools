@@ -481,13 +481,18 @@ def windowed_loh_stats(
         }
     }
 
-
-# --------------------------------------------------------------------
-# Output Tab WRITER
-# --------------------------------------------------------------------
-
 def write_windowed_loh_tsv(window_stats, output_prefix="loh_windows"):
     windows_by_sample = window_stats["windows"]
+
+    # Compute cumulative offsets across contigs (genome-wide position)
+    offsets = {}
+    running = 0
+    first_sample = next(iter(windows_by_sample))
+
+    for chrom in windows_by_sample[first_sample]:
+        last_end = windows_by_sample[first_sample][chrom][-1]["win_end"]
+        offsets[chrom] = running
+        running += last_end + 1
 
     for sample, chrom_dict in windows_by_sample.items():
         outname = f"{output_prefix}.{sample}.tab"
@@ -500,13 +505,14 @@ def write_windowed_loh_tsv(window_stats, output_prefix="loh_windows"):
 
             for chrom, win_list in chrom_dict.items():
                 for row in win_list:
+                    cum_pos = offsets[chrom] + row["win_start"]
                     out.write(
-                        f"{row['contig']}\t"
-                        f"{row['win_start']}\t{row['win_end']}\t{row['window_id']}\t"
+                        f"{chrom}\t{row['win_start']}\t{row['win_end']}\t{cum_pos}\t"
                         f"{row['het_snps']}\t{row['hom_snps']}\t"
                         f"{row['het_indels']}\t{row['hom_indels']}\t"
                         f"{row['total_variants']}\t{row['het_sites']}\t"
                         f"{row['loh_blocks']}\t{row['loh_bp']}\n"
                     )
+
         print(f"[INFO] wrote {outname}")
 
